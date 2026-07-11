@@ -1,0 +1,69 @@
+<div class="view" data-title="Fast IPTV M3U" data-controller="__plugin/FastIptvConfig" style="overflow-y: auto;">
+    <div class="padded-left padded-left-page padded-right padded-top-page padded-bottom-page">
+        <form id="FastIptvConfigForm">
+
+            <h2 class="sectionTitle">Stream Defaults</h2>
+
+            <div class="inputContainer">
+                <input is="emby-input" id="txtVideoCodec" type="text" label="Default Video Codec"
+                       placeholder="h264" />
+                <div class="fieldDescription">Common values: h264, hevc, mpeg2video</div>
+            </div>
+
+            <div class="inputContainer">
+                <input is="emby-input" id="txtAudioCodec" type="text" label="Default Audio Codec"
+                       placeholder="aac" />
+                <div class="fieldDescription">Common values: aac, ac3, eac3, mp3</div>
+            </div>
+
+            <div class="inputContainer">
+                <input is="emby-input" id="txtContainer" type="text" label="Default Container"
+                       placeholder="ts" />
+                <div class="fieldDescription">Common values: ts, mpegts</div>
+            </div>
+
+            <div class="inputContainer">
+                <input is="emby-input" id="txtWidth" type="text" label="Default Width"
+                       placeholder="1920" />
+            </div>
+
+            <div class="inputContainer">
+                <input is="emby-input" id="txtHeight" type="text" label="Default Height"
+                       placeholder="1080" />
+            </div>
+
+            <h2 class="sectionTitle">Global Request Settings</h2>
+
+            <div class="inputContainer">
+                <input is="emby-input" id="txtUserAgent" type="text" label="User-Agent (global fallback)"
+                       placeholder="VLC/3.0.0" />
+                <div class="fieldDescription">Sent with playlist and stream requests for all tuners that do not specify their own User-Agent.</div>
+            </div>
+
+            <div class="inputContainer">
+                <input is="emby-input" id="txtCacheTtlHours" type="number" label="Channel List Cache Duration (hours)"
+                       placeholder="6" min="1" max="168" />
+                <div class="fieldDescription">How long to cache each tuner's channel list before re-fetching. Per-tuner overrides take precedence.</div>
+            </div>
+
+            <div class="inputContainer">
+                <input is="emby-input" id="txtStreamTimeoutSeconds" type="number" label="Stream Timeout (seconds)"
+                       placeholder="15" min="1" max="300" />
+                <div class="fieldDescription">Default seconds to wait when connecting to a stream. Per-tuner overrides take precedence.</div>
+            </div>
+
+            <div class="inputContainer">
+                <input is="emby-input" id="txtStreamRetryCount" type="number" label="Stream Open Retries"
+                       placeholder="2" min="0" max="10" />
+                <div class="fieldDescription">Default number of retries on stream open failure. Per-tuner overrides take precedence.</div>
+            </div>
+
+            <div>
+                <button is="emby-button" type="submit" class="raised button-submit block">
+                    <span>Save</span>
+                </button>
+            </div>
+
+        </form>
+    </div>
+</div>

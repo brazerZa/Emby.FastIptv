@@ -1,0 +1,77 @@
+<div class="view" data-title="Fast IPTV M3U - Tuner Setup" data-controller="__plugin/FastIptvTunerSetupCtrl" style="overflow-y: auto;">
+    <div class="padded-left padded-left-page padded-right padded-top-page padded-bottom-page">
+        <form id="tunerSetupForm">
+
+            <div class="inputContainer">
+                <input is="emby-input" id="txtFriendlyName" type="text" label="Tuner Name"
+                       placeholder="My IPTV Provider" />
+                <div class="fieldDescription">A friendly name to identify this tuner.</div>
+            </div>
+
+            <div class="inputContainer">
+                <input is="emby-input" id="txtTunerUrl" type="url" label="M3U Playlist URL"
+                       placeholder="http://provider.com/playlist.m3u" required />
+                <div class="fieldDescription">Direct link to your M3U or M3U8 playlist.</div>
+            </div>
+
+            <div class="inputContainer">
+                <input is="emby-input" id="txtUserAgent" type="text" label="User-Agent (optional)"
+                       placeholder="VLC/3.0.0" />
+                <div class="fieldDescription">Overrides the global User-Agent for this tuner's playlist and stream requests.</div>
+            </div>
+
+            <div class="inputContainer">
+                <label class="inputLabel" for="txtCustomHeaders">Custom HTTP Headers (optional)</label>
+                <textarea id="txtCustomHeaders" rows="3"
+                          placeholder="X-Forwarded-For: 1.2.3.4&#10;Referer: https://example.com"
+                          style="width:100%;box-sizing:border-box;background:transparent;border:1px solid rgba(255,255,255,.2);color:inherit;padding:8px 12px;border-radius:2px;font-size:inherit;font-family:inherit;resize:vertical"></textarea>
+                <div class="fieldDescription">One header per line in "Name: Value" format. Applied to playlist and stream requests.</div>
+            </div>
+
+            <div class="inputContainer">
+                <input is="emby-input" id="txtCacheTtl" type="number" label="Cache Duration (hours)"
+                       placeholder="0" min="0" max="168" />
+                <div class="fieldDescription">How long to cache the channel list. Leave blank or 0 to use the global default.</div>
+            </div>
+
+            <div class="inputContainer">
+                <input is="emby-input" id="txtEpgUrl" type="url" label="XMLTV EPG URL (optional)"
+                       placeholder="http://provider.com/epg.xml" />
+                <div class="fieldDescription">URL to an XMLTV guide data file. Channel IDs in the XMLTV must match the tvg-id values in your M3U playlist. Leave blank to disable built-in EPG for this tuner.</div>
+            </div>
+
+            <div class="inputContainer">
+                <input is="emby-input" id="txtTunerCount" type="number" label="Max Concurrent Streams"
+                       placeholder="0" min="0" max="100" />
+                <div class="fieldDescription">Maximum number of simultaneous streams from this tuner. Leave blank or 0 for unlimited.</div>
+            </div>
+
+            <div class="inputContainer">
+                <input is="emby-input" id="txtStreamTimeout" type="number" label="Stream Timeout (seconds)"
+                       placeholder="0" min="0" max="300" />
+                <div class="fieldDescription">Seconds to wait when connecting to a stream. Leave blank or 0 to use the global default.</div>
+            </div>
+
+            <div class="inputContainer">
+                <input is="emby-input" id="txtStreamRetryCount" type="number" label="Stream Open Retries"
+                       placeholder="0" min="0" max="10" />
+                <div class="fieldDescription">How many times to retry a failed stream open. Leave blank or 0 to use the global default.</div>
+            </div>
+
+            <div class="checkboxContainer checkboxContainer-withDescription">
+                <label class="emby-checkbox-label">
+                    <input type="checkbox" is="emby-checkbox" id="chkHealthProbe" />
+                    <span>Enable Health Probe</span>
+                </label>
+                <div class="fieldDescription">Send a HEAD request to the stream URL before opening. Detects unreachable streams faster. Disable if your provider rejects HEAD requests with connection errors.</div>
+            </div>
+
+            <div>
+                <button is="emby-button" type="submit" class="raised button-submit block">
+                    <span>Save</span>
+                </button>
+            </div>
+
+        </form>
+    </div>
+</div>

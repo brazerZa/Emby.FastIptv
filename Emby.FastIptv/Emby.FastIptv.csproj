@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="System.IO.Pipelines" Version="8.0.0" />
+    <Reference Include="MediaBrowser.Common">
+      <HintPath>$(ProgramFiles)\Emby-Server\system\MediaBrowser.Common.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="MediaBrowser.Controller">
+      <HintPath>$(ProgramFiles)\Emby-Server\system\MediaBrowser.Controller.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="MediaBrowser.Model">
+      <HintPath>$(ProgramFiles)\Emby-Server\system\MediaBrowser.Model.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Thumb.png" />
+    <EmbeddedResource Include="Configuration\configurationpage.html" />
+    <EmbeddedResource Include="Configuration\configurationcontroller.js" />
+    <EmbeddedResource Include="Configuration\tunersetup.html" />
+    <EmbeddedResource Include="Configuration\tunersetupcontroller.js" />
+  </ItemGroup>
+</Project>

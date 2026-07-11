@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Fast IPTV M3U Tuner Setup</title>
+</head>
+<body>
+<div data-role="page" class="page type-interior withSideMenu" id="FastIptvTunerSetupPage">
+    <div data-role="content">
+        <div class="content-primary">
+            <form id="FastIptvTunerSetupForm">
+                <div class="sectionTitleContainer">
+                    <h2 class="sectionTitle">Fast IPTV M3U — Add Tuner</h2>
+                </div>
+
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="txtFriendlyName">Name</label>
+                    <input id="txtFriendlyName" name="txtFriendlyName" type="text" class="emby-input"
+                           placeholder="Fast IPTV M3U" />
+                </div>
+
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="txtM3uUrl">M3U Playlist URL</label>
+                    <input id="txtM3uUrl" name="txtM3uUrl" type="url" class="emby-input"
+                           placeholder="http://provider.com/playlist.m3u" required />
+                    <div class="fieldDescription">
+                        URL to your M3U playlist. Refreshed every 6 hours automatically.
+                    </div>
+                </div>
+
+                <div>
+                    <button is="emby-button" type="submit" class="raised button-submit block emby-button">
+                        <span>Save</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+</body>
+</html>
