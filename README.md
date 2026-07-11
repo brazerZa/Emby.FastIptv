@@ -53,4 +53,4 @@ folder.
 
 ## License
 
-No license specified yet.
+[MIT](LICENSE)
