@@ -154,7 +154,10 @@ namespace Emby.FastIptv.LiveTv
             if (channel == null) return new List<MediaSourceInfo>();
 
             var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
-            return new List<MediaSourceInfo> { BuildMediaSource(channelId, channel.Url, config) };
+            var userAgent = GetEffectiveUserAgent(info.Id, config);
+            var source = await BuildMediaSourceAsync(channelId, channel.Url, config, userAgent, ct)
+                .ConfigureAwait(false);
+            return new List<MediaSourceInfo> { source };
         }
 
         public async Task<ILiveStream> GetChannelStream(
@@ -166,8 +169,9 @@ namespace Emby.FastIptv.LiveTv
                 throw new InvalidOperationException($"Channel '{channelId}' not found.");
 
             var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
-            var source = BuildMediaSource(channelId, channel.Url, config);
             var userAgent = GetEffectiveUserAgent(info.Id, config);
+            var source = await BuildMediaSourceAsync(channelId, channel.Url, config, userAgent, ct)
+                .ConfigureAwait(false);
             var headers = ParseCustomHeaders(GetTunerSettings(info.Id)?.CustomHeaders);
             var timeoutSeconds = GetEffectiveStreamTimeout(info.Id, config);
             var retryCount = GetEffectiveStreamRetryCount(info.Id, config);
@@ -200,11 +204,49 @@ namespace Emby.FastIptv.LiveTv
 
         // ── helpers ────────────────────────────────────────────────────────────
 
-        private static MediaSourceInfo BuildMediaSource(string channelId, string url, PluginConfiguration config)
+        private async Task<MediaSourceInfo> BuildMediaSourceAsync(
+            string channelId,
+            string url,
+            PluginConfiguration config,
+            string userAgent,
+            CancellationToken ct)
         {
             // HLS streams (.m3u8) must be declared as "hls" so Emby doesn't pass
             // -f mpegts to ffmpeg and clients check HLS capability rather than TS.
             var container = IsHlsUrl(url) ? "hls" : config.DefaultContainer;
+
+            var videoCodec = config.DefaultVideoCodec ?? "h264";
+            var audioCodec = config.DefaultAudioCodec ?? "aac";
+            var width = config.DefaultWidth > 0 ? config.DefaultWidth : 0;
+            var height = config.DefaultHeight > 0 ? config.DefaultHeight : 0;
+            var allowDirectPlay = true;
+
+            // Probe real codecs — defaults (h264/1080p) break HEVC/4K (audio-only / black video).
+            if (IsHlsUrl(url) && Uri.TryCreate(url, UriKind.Absolute, out var playlistUri))
+            {
+                try
+                {
+                    using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    cts.CancelAfter(TimeSpan.FromSeconds(8));
+                    var probe = await StreamProbe.ProbePlaylistAsync(Http, playlistUri, userAgent, cts.Token)
+                        .ConfigureAwait(false);
+                    if (!string.IsNullOrEmpty(probe.VideoCodec))
+                        videoCodec = probe.VideoCodec;
+                    if (!string.IsNullOrEmpty(probe.AudioCodec))
+                        audioCodec = probe.AudioCodec;
+                    if (probe.Width > 0) width = probe.Width;
+                    if (probe.Height > 0) height = probe.Height;
+                }
+                catch
+                {
+                    // Keep configured defaults.
+                }
+            }
+
+            // Browsers often cannot DirectPlay HEVC — force remux/transcode.
+            if (string.Equals(videoCodec, "hevc", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(videoCodec, "h265", StringComparison.OrdinalIgnoreCase))
+                allowDirectPlay = false;
 
             return new MediaSourceInfo
             {
@@ -215,24 +257,25 @@ namespace Emby.FastIptv.LiveTv
                 IsInfiniteStream = true,
                 RequiresOpening = false,
                 RequiresClosing = false,
-                SupportsDirectPlay = true,
+                SupportsDirectPlay = allowDirectPlay,
                 SupportsDirectStream = true,
+                SupportsTranscoding = true,
                 BufferMs = 3000,
                 MediaStreams = new List<MediaStream>
                 {
                     new MediaStream
                     {
                         Type = MediaStreamType.Video,
-                        Codec = config.DefaultVideoCodec,
+                        Codec = videoCodec,
                         Index = 0,
                         IsDefault = true,
-                        Width = config.DefaultWidth > 0 ? config.DefaultWidth : 0,
-                        Height = config.DefaultHeight > 0 ? config.DefaultHeight : 0
+                        Width = width,
+                        Height = height
                     },
                     new MediaStream
                     {
                         Type = MediaStreamType.Audio,
-                        Codec = config.DefaultAudioCodec,
+                        Codec = audioCodec,
                         Index = 1,
                         Channels = 2,
                         IsDefault = true

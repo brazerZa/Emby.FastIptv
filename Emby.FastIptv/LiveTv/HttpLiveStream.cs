@@ -57,6 +57,15 @@ namespace Emby.FastIptv.LiveTv
         public DateTimeOffset DateOpened { get; }
         public bool SupportsCopyTo => true;
 
+        // Emby 4.10+ ILiveStream members.
+        public void AddConsumer(string id) => ConsumerCount++;
+
+        public void RemoveConsumer(string id)
+        {
+            if (ConsumerCount > 0)
+                ConsumerCount--;
+        }
+
         public Task Open(CancellationToken cancellationToken) => OpenInternalAsync(cancellationToken);
 
         public Task Close()

@@ -5,18 +5,23 @@
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
   </PropertyGroup>
+
+  <!-- Override with: dotnet build -p:EmbySystemDir=/path/to/Emby-Server/system -->
+  <PropertyGroup>
+    <EmbySystemDir Condition="'$(EmbySystemDir)' == ''">$(ProgramFiles)\Emby-Server\system</EmbySystemDir>
+  </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="System.IO.Pipelines" Version="8.0.0" />
     <Reference Include="MediaBrowser.Common">
-      <HintPath>$(ProgramFiles)\Emby-Server\system\MediaBrowser.Common.dll</HintPath>
+      <HintPath>$(EmbySystemDir)\MediaBrowser.Common.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="MediaBrowser.Controller">
-      <HintPath>$(ProgramFiles)\Emby-Server\system\MediaBrowser.Controller.dll</HintPath>
+      <HintPath>$(EmbySystemDir)\MediaBrowser.Controller.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="MediaBrowser.Model">
-      <HintPath>$(ProgramFiles)\Emby-Server\system\MediaBrowser.Model.dll</HintPath>
+      <HintPath>$(EmbySystemDir)\MediaBrowser.Model.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>
