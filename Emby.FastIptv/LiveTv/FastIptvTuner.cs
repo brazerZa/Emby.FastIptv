@@ -154,7 +154,12 @@ namespace Emby.FastIptv.LiveTv
             if (channel == null) return new List<MediaSourceInfo>();
 
             var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
-            return new List<MediaSourceInfo> { BuildMediaSource(channelId, channel.Url, config) };
+            var userAgent = GetEffectiveUserAgent(info.Id, config);
+            var headers = ParseCustomHeaders(GetTunerSettings(info.Id)?.CustomHeaders);
+            return new List<MediaSourceInfo>
+            {
+                BuildMediaSource(channelId, channel.Url, config, userAgent, headers)
+            };
         }
 
         public async Task<ILiveStream> GetChannelStream(
@@ -166,9 +171,9 @@ namespace Emby.FastIptv.LiveTv
                 throw new InvalidOperationException($"Channel '{channelId}' not found.");
 
             var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
-            var source = BuildMediaSource(channelId, channel.Url, config);
             var userAgent = GetEffectiveUserAgent(info.Id, config);
             var headers = ParseCustomHeaders(GetTunerSettings(info.Id)?.CustomHeaders);
+            var source = BuildMediaSource(channelId, channel.Url, config, userAgent, headers);
             var timeoutSeconds = GetEffectiveStreamTimeout(info.Id, config);
             var retryCount = GetEffectiveStreamRetryCount(info.Id, config);
 
@@ -200,13 +205,18 @@ namespace Emby.FastIptv.LiveTv
 
         // ── helpers ────────────────────────────────────────────────────────────
 
-        private static MediaSourceInfo BuildMediaSource(string channelId, string url, PluginConfiguration config)
+        private static MediaSourceInfo BuildMediaSource(
+            string channelId,
+            string url,
+            PluginConfiguration config,
+            string userAgent,
+            Dictionary<string, string> customHeaders)
         {
             // HLS streams (.m3u8) must be declared as "hls" so Emby doesn't pass
             // -f mpegts to ffmpeg and clients check HLS capability rather than TS.
             var container = IsHlsUrl(url) ? "hls" : config.DefaultContainer;
 
-            return new MediaSourceInfo
+            var source = new MediaSourceInfo
             {
                 Id = channelId,
                 Path = url,
@@ -217,29 +227,62 @@ namespace Emby.FastIptv.LiveTv
                 RequiresClosing = false,
                 SupportsDirectPlay = true,
                 SupportsDirectStream = true,
+                SupportsTranscoding = true,
                 BufferMs = 3000,
-                MediaStreams = new List<MediaStream>
+                RequiredHttpHeaders = BuildRequiredHeaders(userAgent, customHeaders),
+
+                // Deliberately empty: Emby probes the stream and fills in the real codecs,
+                // resolution and channel count. Advertising guesses makes Emby offer an HEVC
+                // 4K channel to clients as h264/1080p, which plays as audio-only black video.
+                MediaStreams = new List<MediaStream>()
+            };
+
+            if (config.AdvertiseStreamMetadata)
+                source.MediaStreams = BuildAdvertisedStreams(config);
+
+            return source;
+        }
+
+        // ffmpeg and direct-playing clients fetch the URL themselves rather than going
+        // through HttpLiveStream, so the tuner's User-Agent and custom headers have to
+        // travel with the media source or the provider answers 403.
+        private static Dictionary<string, string> BuildRequiredHeaders(
+            string userAgent, Dictionary<string, string> customHeaders)
+        {
+            var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            if (customHeaders != null)
+                foreach (var kv in customHeaders)
+                    headers[kv.Key] = kv.Value;
+
+            // The dedicated User-Agent setting is more specific, so it wins.
+            if (!string.IsNullOrEmpty(userAgent))
+                headers["User-Agent"] = userAgent;
+
+            return headers;
+        }
+
+        // Opt-in legacy behaviour: advertise the configured codecs instead of probing.
+        // Width/Height are intentionally left unset so the stream's native resolution applies.
+        private static List<MediaStream> BuildAdvertisedStreams(PluginConfiguration config) =>
+            new List<MediaStream>
+            {
+                new MediaStream
                 {
-                    new MediaStream
-                    {
-                        Type = MediaStreamType.Video,
-                        Codec = config.DefaultVideoCodec,
-                        Index = 0,
-                        IsDefault = true,
-                        Width = config.DefaultWidth > 0 ? config.DefaultWidth : 0,
-                        Height = config.DefaultHeight > 0 ? config.DefaultHeight : 0
-                    },
-                    new MediaStream
-                    {
-                        Type = MediaStreamType.Audio,
-                        Codec = config.DefaultAudioCodec,
-                        Index = 1,
-                        Channels = 2,
-                        IsDefault = true
-                    }
+                    Type = MediaStreamType.Video,
+                    Codec = config.DefaultVideoCodec,
+                    Index = 0,
+                    IsDefault = true
+                },
+                new MediaStream
+                {
+                    Type = MediaStreamType.Audio,
+                    Codec = config.DefaultAudioCodec,
+                    Index = 1,
+                    Channels = 2,
+                    IsDefault = true
                 }
             };
-        }
 
         private static bool IsLocalPath(string url)
         {

@@ -5,31 +5,35 @@
             <h2 class="sectionTitle">Stream Defaults</h2>
 
             <div class="inputContainer">
+                <input is="emby-input" id="txtContainer" type="text" label="Default Container"
+                       placeholder="ts" />
+                <div class="fieldDescription">Common values: ts, mpegts. HLS playlists (.m3u8) are detected automatically.</div>
+            </div>
+
+            <div class="checkboxContainer">
+                <label>
+                    <input is="emby-checkbox" type="checkbox" id="chkAdvertiseStreamMetadata" />
+                    <span>Advertise fixed stream metadata instead of probing</span>
+                </label>
+                <div class="fieldDescription">
+                    Leave this off. When off, Emby probes each stream for its real codec and audio
+                    channels. Turning it on advertises the fixed codecs below for every channel,
+                    which breaks HEVC/4K playback (audio with black video) because Emby then offers
+                    those channels to clients as h264. Resolution is never advertised either way —
+                    the stream's native resolution always applies.
+                </div>
+            </div>
+
+            <div class="inputContainer">
                 <input is="emby-input" id="txtVideoCodec" type="text" label="Default Video Codec"
                        placeholder="h264" />
-                <div class="fieldDescription">Common values: h264, hevc, mpeg2video</div>
+                <div class="fieldDescription">Only used when the option above is enabled. Common values: h264, hevc, mpeg2video</div>
             </div>
 
             <div class="inputContainer">
                 <input is="emby-input" id="txtAudioCodec" type="text" label="Default Audio Codec"
                        placeholder="aac" />
-                <div class="fieldDescription">Common values: aac, ac3, eac3, mp3</div>
-            </div>
-
-            <div class="inputContainer">
-                <input is="emby-input" id="txtContainer" type="text" label="Default Container"
-                       placeholder="ts" />
-                <div class="fieldDescription">Common values: ts, mpegts</div>
-            </div>
-
-            <div class="inputContainer">
-                <input is="emby-input" id="txtWidth" type="text" label="Default Width"
-                       placeholder="1920" />
-            </div>
-
-            <div class="inputContainer">
-                <input is="emby-input" id="txtHeight" type="text" label="Default Height"
-                       placeholder="1080" />
+                <div class="fieldDescription">Only used when the option above is enabled. Common values: aac, ac3, eac3, mp3</div>
             </div>
 
             <h2 class="sectionTitle">Global Request Settings</h2>
