@@ -1,4 +1,4 @@
-define(['baseView', 'loading', 'emby-input', 'emby-button'], function (BaseView, loading) {
+define(['baseView', 'loading', 'emby-input', 'emby-button', 'emby-checkbox'], function (BaseView, loading) {
     'use strict';
 
     var pluginId = 'C7D8E9F0-A1B2-4C3D-8E4F-5A6B7C8D9E0F';
@@ -7,8 +7,7 @@ define(['baseView', 'loading', 'emby-input', 'emby-button'], function (BaseView,
         view.querySelector('#txtVideoCodec').value = config.DefaultVideoCodec || 'h264';
         view.querySelector('#txtAudioCodec').value = config.DefaultAudioCodec || 'aac';
         view.querySelector('#txtContainer').value = config.DefaultContainer || 'ts';
-        view.querySelector('#txtWidth').value = config.DefaultWidth || 1920;
-        view.querySelector('#txtHeight').value = config.DefaultHeight || 1080;
+        view.querySelector('#chkAdvertiseStreamMetadata').checked = config.AdvertiseStreamMetadata === true;
         view.querySelector('#txtUserAgent').value = config.UserAgent || '';
         view.querySelector('#txtCacheTtlHours').value = config.CacheTtlHours || 6;
         view.querySelector('#txtStreamTimeoutSeconds').value = config.StreamTimeoutSeconds || 15;
@@ -24,8 +23,7 @@ define(['baseView', 'loading', 'emby-input', 'emby-button'], function (BaseView,
             config.DefaultVideoCodec = form.querySelector('#txtVideoCodec').value || 'h264';
             config.DefaultAudioCodec = form.querySelector('#txtAudioCodec').value || 'aac';
             config.DefaultContainer = form.querySelector('#txtContainer').value || 'ts';
-            config.DefaultWidth = parseInt(form.querySelector('#txtWidth').value, 10) || 1920;
-            config.DefaultHeight = parseInt(form.querySelector('#txtHeight').value, 10) || 1080;
+            config.AdvertiseStreamMetadata = form.querySelector('#chkAdvertiseStreamMetadata').checked;
             config.UserAgent = form.querySelector('#txtUserAgent').value;
             config.CacheTtlHours = parseInt(form.querySelector('#txtCacheTtlHours').value, 10) || 6;
             config.StreamTimeoutSeconds = parseInt(form.querySelector('#txtStreamTimeoutSeconds').value, 10) || 15;

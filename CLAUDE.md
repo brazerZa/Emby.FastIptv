@@ -94,13 +94,72 @@ Stored as `TunerSettings[]` array in `PluginConfiguration` (not a Dictionary —
 
 ---
 
+## Which Emby install is which
+There are two Emby installs on this machine and they are **not** the same version:
+
+| Path | Version | Role |
+|------|---------|------|
+| `%APPDATA%\Emby-Server\system` | 4.9.5.0 | **The server that actually runs and loads the plugin** |
+| `C:\Program Files\Emby-Server\system` | 4.8.8.0 | Older leftover install — not running |
+
+Data path of the running server is `%APPDATA%\Emby-Server\programdata`.
+
+`Emby.FastIptv.csproj` auto-detects this: it references `%APPDATA%\Emby-Server\system` when present
+and falls back to Program Files. The build prints which one it picked. Override with:
+
+```
+dotnet build Emby.FastIptv/Emby.FastIptv.csproj -c Release -p:EmbySystemDir="<path>\Emby-Server\system"
+```
+
+Building against the wrong version is silent at compile time and only shows up as the plugin
+failing to load, so check the printed path if anything behaves oddly.
+
 ## Deployment checklist (after every build)
-1. Copy `bin/Release/net8.0/Emby.FastIptv.dll` → `C:\ProgramData\Emby-Server\plugins\Emby.FastIptv\`
-2. Restart Emby Server service
+1. Copy `bin/Release/net8.0/Emby.FastIptv.dll` → `%APPDATA%\Emby-Server\programdata\plugins\Emby.FastIptv.dll`
+   — a **flat DLL directly in `plugins\`**, not in an `Emby.FastIptv\` subfolder
+2. Restart Emby Server
 3. Hard-refresh browser (`Ctrl+Shift+F5`) to clear cached HTML/JS
+4. Confirm the load in `%APPDATA%\Emby-Server\programdata\logs\embyserver.txt`:
+   `Loading Emby.FastIptv, Version=<x.y.z.w>` — verify it is the version you just built
+
+## Diagnosing playback failures
+Emby turns the advertised video codec into an ffmpeg **input decoder override**, placed before `-i`:
+
+```
+-f mpegts -c:v:0 h264 -noautorotate -i "http://..."
+```
+
+If that forced decoder does not match the stream's real MPEG-TS `stream_type`, ffmpeg cannot parse
+the elementary stream and playback dies before a single segment is written — even on a pure stream
+copy, because the segment muxer needs dimensions:
+
+```
+[h264] no frame!
+Could not find codec parameters for stream 0 ...: unspecified size
+[segment] dimensions not set
+Could not write header for output file #0 (incorrect codec parameters ?): Invalid argument
+```
+
+The real codec is the hex tag in ffmpeg's own stream line — `0x001B` = H.264, `0x0024` = HEVC:
+
+```
+Stream #0:0[0x100]: Video: h264 ([36][0][0][0] / 0x0024), none    <- forced h264 onto HEVC, broken
+Stream #0:0[0x100]: Video: h264 (High) ([27][0][0][0] / 0x001B)   <- genuinely H.264, fine
+```
+
+This is why the plugin must not advertise guessed codecs. See `AdvertiseStreamMetadata`.
+Per-playback logs: `%APPDATA%\Emby-Server\programdata\logs\ffmpeg-{remux,directstream,transcode}-*.txt`
 
 ## Known gotchas
 - Bump `AssemblyVersion` + `AssemblyFileVersion` in `AssemblyInfo.cs` on every release so Emby's ETag cache-busting works
 - `XmlSerializer` cannot serialise `Dictionary<K,V>` — always use arrays for config collections
 - `ReadAsStringAsync()` in .NET 8 accepts a `CancellationToken`; in older frameworks it does not
 - `DateTimeOffset.ToUnixTimeSeconds()` is available in .NET 4.6+ / .NET Core
+- `MediaSourceInfo.RequiresOpening` is `false`, so Emby hands the URL straight to ffmpeg and
+  `HttpLiveStream` is bypassed on the normal playback path. Per-tuner User-Agent, custom headers,
+  stream timeout, retries and the health probe do **not** apply there — that is what
+  `RequiredHttpHeaders` on the media source is for
+- `MediaSourceInfo.SupportsProbing` / `AnalyzeDurationMs` / `ReadAtNativeFramerate` / `BufferMs` are
+  `[Obsolete]` and `SupportsProbing` is not referenced by `Emby.LiveTV.dll` at all — setting them
+  achieves nothing; Emby decides probing itself
+- `ILiveStream` on 4.8.8 and 4.9.5 has no `AddConsumer`/`RemoveConsumer` — don't add them speculatively

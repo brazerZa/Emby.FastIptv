@@ -4,11 +4,20 @@ namespace Emby.FastIptv
 {
     public class PluginConfiguration : BasePluginConfiguration
     {
+        // Container is always advertised — Emby needs it to pick the right ffmpeg demuxer.
+        public string DefaultContainer { get; set; } = "ts";
+
+        // When false (default) the plugin advertises no video/audio stream details and lets
+        // Emby probe the opened stream for the real codecs and channel count. Guessing here
+        // is what breaks HEVC/4K channels: Emby hands them to clients as h264, the client
+        // cannot decode what it actually receives, and you get audio with black video.
+        // Resolution is never advertised — the stream's native resolution always applies.
+        // Only enable this if a client needs codec metadata up front.
+        public bool AdvertiseStreamMetadata { get; set; } = false;
+
+        // Used only when AdvertiseStreamMetadata is true.
         public string DefaultVideoCodec { get; set; } = "h264";
         public string DefaultAudioCodec { get; set; } = "aac";
-        public string DefaultContainer { get; set; } = "ts";
-        public int DefaultWidth { get; set; } = 1920;
-        public int DefaultHeight { get; set; } = 1080;
 
         // Global fallback User-Agent for all tuners that don't specify their own.
         public string UserAgent { get; set; } = "";
