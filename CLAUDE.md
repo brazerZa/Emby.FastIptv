@@ -201,6 +201,27 @@ Stream #0:0[0x100]: Video: h264 (High) ([27][0][0][0] / 0x001B)   <- genuinely H
 This is why the plugin must not advertise guessed codecs. See `AdvertiseStreamMetadata`.
 Per-playback logs: `%APPDATA%\Emby-Server\programdata\logs\ffmpeg-{remux,directstream,transcode}-*.txt`
 
+### Where the start-up delay actually is
+Measured on the running 4.9.5 server, `embyserver.txt` response times:
+
+| Request | Fast probe (v1.0.3.1) | Fixed codecs (before) |
+|---------|----------------------|----------------------|
+| `PlaybackInfo` (the plugin's media-source path, probe included) | 1 ms × 50, 2 ms × 1, 1396 ms × 1 | 1 ms × 8, 2 ms × 2, 1439 ms × 1 |
+| `live.m3u8` (Emby starts ffmpeg, waits for segment 0) | 250–390 ms × 7, 556–640 ms × 25, 878–1380 ms × 5 | 250–390 ms × 6, 888–1377 ms × 5 |
+
+So the probe is not in the critical path once a channel is cached — `PlaybackInfo` answers in 1 ms.
+The one ~1.4 s outlier is the first tune after a restart (M3U fetch) and predates the probe.
+
+The visible spinner is Emby's `Waiting for 1 segments`. On a **stream copy** the segment muxer can
+only start at a key frame **in the source**, and these channels have long GOPs (no IDR within ~1.9 s
+of video), so that wait is 0.5–1.4 s. A **transcode** emits its own key frames and starts in
+~250–390 ms, which is why the fast samples on both sides are the nvenc sessions. Nothing in the
+plugin can shorten it — do not go looking for it in the probe.
+
+The remaining plugin-side cost is one probe per channel per `ProbeCacheHours`, ~0.5 s, on the first
+tune only. It could be moved off the critical path by probing in the background after a channel
+refresh, at the price of one provider connection per channel — only sensible for short lists.
+
 ## Known gotchas
 - Bump `AssemblyVersion` + `AssemblyFileVersion` in `AssemblyInfo.cs` on every release so Emby's ETag cache-busting works
 - `XmlSerializer` cannot serialise `Dictionary<K,V>` — always use arrays for config collections
