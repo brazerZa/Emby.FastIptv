@@ -19,7 +19,16 @@ Emby.FastIptv/
 │   ├── M3uParser.cs                   # Parses #EXTINF lines into M3uChannel
 │   ├── M3uChannel.cs                  # M3U channel model
 │   ├── XmlTvParser.cs                 # Parses XMLTV XML into ProgramInfo
-│   └── HttpLiveStream.cs              # ILiveStream with custom UA + headers
+│   ├── HttpLiveStream.cs              # ILiveStream with custom UA + headers
+│   └── Probe/                         # Fast in-process stream probe (see below)
+│       ├── StreamProber.cs            # HTTP read budget/deadline, HLS resolution, result cache
+│       ├── TsProbe.cs                 # MPEG-TS demux: PAT -> PMT -> per-PID elementary streams
+│       ├── StreamTypes.cs             # PMT stream_type + descriptors -> ffmpeg codec name
+│       ├── VideoParameterSets.cs      # H.264/HEVC SPS + MPEG-2 sequence header -> resolution
+│       ├── AudioHeaders.cs            # ADTS/AC-3/MPEG-audio frame headers -> rate + channels
+│       ├── Crc32Mpeg.cs               # PSI section CRC validation
+│       ├── BitReader.cs               # Exp-Golomb bit reader
+│       └── ProbedStream.cs            # Container-agnostic stream description
 └── Configuration/
     ├── configurationpage.html         # Plugin-level settings page (stream defaults, global UA, cache TTL)
     ├── configurationcontroller.js     # Controller for configurationpage
@@ -86,7 +95,49 @@ Stored as `TunerSettings[]` array in `PluginConfiguration` (not a Dictionary —
 - `HttpLiveStream` uses `Timeout.InfiniteTimeSpan` + linked CTS for per-request connect timeout
 - Channel `group-title` mapped to `ChannelInfo.Tags` so channels appear grouped in the Emby UI
 
-#### Phase 4 — Advanced QoL (PLANNED)
+#### Phase 4 — Fast stream probing ✅ DONE (v1.0.3.0)
+Leaving `MediaStreams` empty is correct but makes Emby probe every channel on every tune, which is
+what made channels slow to start. The plugin now determines the real stream details itself, in
+process, in a few hundred milliseconds, and caches them.
+
+- `StreamProber.ProbeAsync` fetches the stream once and stops as soon as it knows enough:
+  codecs come from the PMT (first packets), resolution needs a key frame
+- Deadlines: `ProbeTimeoutSeconds` (hard, default 4 s) and an internal 1200 ms soft deadline after
+  which known codecs are accepted without resolution — Emby then applies native resolution
+- Read budget `ProbeMaxKilobytes` (default 4096) is a ceiling, not a cost. Broadcast GOPs are long:
+  on the NPO test channels the first SPS sits ~3.5 MB in, while the PMT is in the first KB
+- Results cached in memory and in `<plugin data folder>/probe-cache.json`, TTL `ProbeCacheHours`
+  (default 24). Failures are cached in memory only, for 15 min. `OnSaved` clears everything, so
+  re-saving a tuner is the manual reset when a provider changes a channel's codec
+- Concurrent tunes of the same URL share one probe (providers often allow one connection)
+- HLS: single-variant playlists are followed to their first segment and parsed as MPEG-TS.
+  Multi-variant masters and `#EXT-X-MAP` (fMP4) are rejected
+- `AdvertiseStreamMetadata` still wins when enabled — it is the legacy escape hatch and must be
+  **off** for the probe to run
+- There is deliberately **no** "let Emby probe everything" switch. The probe already defers to
+  Emby's probe per channel whenever it is not certain, so a global version of that would only be a
+  slower route to the same answer. The config page is a two-way radio group (`streamMetadataMode`:
+  fast probe / fixed codecs) stored in the single `AdvertiseStreamMetadata` boolean; each mode's own
+  options only show while that mode is selected. Two checkboxes were wrong here — the second
+  silently overrode the first
+
+**The probe rejects rather than guesses.** A rejection costs only the time of Emby's own probe;
+a wrong codec breaks playback outright. It rejects on: any PMT `stream_type` it cannot name
+(an unnamed entry would shift every later ffmpeg stream index), multi-program transports,
+scrambled payloads, non-MPEG-TS content, missing video payload, and video with bit depth > 8
+(that is where HDR lives, and VUI/SEI colour parsing is deliberately not implemented — advertising
+such a channel as SDR would suppress tone mapping).
+
+`ProbedStream.Index` is the position in the PMT ES loop, which is the index ffmpeg assigns, because
+Emby turns it into `-map 0:<index>`.
+
+Verified against the live provider and against synthetic streams (`ffmpeg` + `ffprobe` as the
+reference): h264 High/L4.2 1080p + AAC LC 48k stereo (3 live channels, 425–533 ms cold), HEVC Main
+720p + AC-3 5.1, MPEG-2 576i + MP2 mono, h264 with two audio tracks and ISO-639 languages, HEVC
+Main 10 4K (rejected as intended), multi-program (rejected), non-TS payload (rejected), and
+single-variant HLS (34 ms via first segment).
+
+#### Phase 5 — Advanced QoL (PLANNED)
 - Channel group/category filtering (only import selected groups)
 - Channel number offset / override
 - Duplicate channel detection
@@ -150,6 +201,27 @@ Stream #0:0[0x100]: Video: h264 (High) ([27][0][0][0] / 0x001B)   <- genuinely H
 This is why the plugin must not advertise guessed codecs. See `AdvertiseStreamMetadata`.
 Per-playback logs: `%APPDATA%\Emby-Server\programdata\logs\ffmpeg-{remux,directstream,transcode}-*.txt`
 
+### Where the start-up delay actually is
+Measured on the running 4.9.5 server, `embyserver.txt` response times:
+
+| Request | Fast probe (v1.0.3.1) | Fixed codecs (before) |
+|---------|----------------------|----------------------|
+| `PlaybackInfo` (the plugin's media-source path, probe included) | 1 ms × 50, 2 ms × 1, 1396 ms × 1 | 1 ms × 8, 2 ms × 2, 1439 ms × 1 |
+| `live.m3u8` (Emby starts ffmpeg, waits for segment 0) | 250–390 ms × 7, 556–640 ms × 25, 878–1380 ms × 5 | 250–390 ms × 6, 888–1377 ms × 5 |
+
+So the probe is not in the critical path once a channel is cached — `PlaybackInfo` answers in 1 ms.
+The one ~1.4 s outlier is the first tune after a restart (M3U fetch) and predates the probe.
+
+The visible spinner is Emby's `Waiting for 1 segments`. On a **stream copy** the segment muxer can
+only start at a key frame **in the source**, and these channels have long GOPs (no IDR within ~1.9 s
+of video), so that wait is 0.5–1.4 s. A **transcode** emits its own key frames and starts in
+~250–390 ms, which is why the fast samples on both sides are the nvenc sessions. Nothing in the
+plugin can shorten it — do not go looking for it in the probe.
+
+The remaining plugin-side cost is one probe per channel per `ProbeCacheHours`, ~0.5 s, on the first
+tune only. It could be moved off the critical path by probing in the background after a channel
+refresh, at the price of one provider connection per channel — only sensible for short lists.
+
 ## Known gotchas
 - Bump `AssemblyVersion` + `AssemblyFileVersion` in `AssemblyInfo.cs` on every release so Emby's ETag cache-busting works
 - `XmlSerializer` cannot serialise `Dictionary<K,V>` — always use arrays for config collections
@@ -163,3 +235,11 @@ Per-playback logs: `%APPDATA%\Emby-Server\programdata\logs\ffmpeg-{remux,directs
   `[Obsolete]` and `SupportsProbing` is not referenced by `Emby.LiveTV.dll` at all — setting them
   achieves nothing; Emby decides probing itself
 - `ILiveStream` on 4.8.8 and 4.9.5 has no `AddConsumer`/`RemoveConsumer` — don't add them speculatively
+- `MediaStream.IsTextSubtitleStream` is read-only on 4.9.5 — assigning it does not compile
+- The probe parsers under `LiveTv/Probe/` deliberately reference no MediaBrowser type, so they can be
+  compiled into a plain console harness and diffed against `ffprobe` without an Emby install
+- `ffprobe` reports H.264 `level` as the raw `level_idc` (42 = 4.2) but HEVC as `general_level_idc`
+  (93 = 3.1, 150 = 5.0). `VideoParameterSets` mirrors that, so values match what Emby would have
+  probed itself
+- The `dvbsub` encoder in the bundled 4.9.5 ffmpeg segfaults, so DVB subtitle PMT entries could not
+  be exercised end to end — that classification path is unverified against real content

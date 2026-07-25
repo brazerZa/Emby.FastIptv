@@ -2,64 +2,120 @@
     <div class="padded-left padded-left-page padded-right padded-top-page padded-bottom-page">
         <form id="FastIptvConfigForm">
 
-            <h2 class="sectionTitle">Stream Defaults</h2>
+            <div class="verticalSection verticalSection-extrabottompadding">
+                <h2 class="sectionTitle">Stream Defaults</h2>
 
-            <div class="inputContainer">
-                <input is="emby-input" id="txtContainer" type="text" label="Default Container"
-                       placeholder="ts" />
-                <div class="fieldDescription">Common values: ts, mpegts. HLS playlists (.m3u8) are detected automatically.</div>
-            </div>
-
-            <div class="checkboxContainer">
-                <label>
-                    <input is="emby-checkbox" type="checkbox" id="chkAdvertiseStreamMetadata" />
-                    <span>Advertise fixed stream metadata instead of probing</span>
-                </label>
-                <div class="fieldDescription">
-                    Leave this off. When off, Emby probes each stream for its real codec and audio
-                    channels. Turning it on advertises the fixed codecs below for every channel,
-                    which breaks HEVC/4K playback (audio with black video) because Emby then offers
-                    those channels to clients as h264. Resolution is never advertised either way —
-                    the stream's native resolution always applies.
+                <div class="inputContainer">
+                    <input is="emby-input" id="txtContainer" type="text" label="Default Container"
+                           placeholder="ts" />
+                    <div class="fieldDescription">Common values: ts, mpegts. HLS playlists (.m3u8) are detected automatically.</div>
                 </div>
             </div>
 
-            <div class="inputContainer">
-                <input is="emby-input" id="txtVideoCodec" type="text" label="Default Video Codec"
-                       placeholder="h264" />
-                <div class="fieldDescription">Only used when the option above is enabled. Common values: h264, hevc, mpeg2video</div>
+            <div class="verticalSection verticalSection-extrabottompadding">
+                <h2 class="sectionTitle">Stream Metadata</h2>
+
+                <div class="fieldDescription" style="margin-bottom: 1.5em;">
+                    Emby needs the real codec of a channel before it can play it, and it turns the
+                    advertised video codec into an ffmpeg input decoder override. Getting it wrong
+                    breaks playback outright, so pick where that information comes from.
+                </div>
+
+                <div class="radioContainer">
+                    <label>
+                        <input type="radio" is="emby-radio" name="streamMetadataMode" id="radioFastProbe" />
+                        <span>Read the real codecs from the stream (fast probe) — recommended</span>
+                    </label>
+                    <div class="fieldDescription radioFieldDescription">
+                        The plugin reads the first part of the stream itself and takes the real codecs,
+                        resolution and audio layout from the MPEG-TS tables, which takes a few hundred
+                        milliseconds instead of the seconds Emby's own probe needs. Results are cached,
+                        so tuning the same channel again costs nothing. Anything the probe cannot read
+                        with certainty falls back to Emby's own probe for that one channel, so playback
+                        is never based on a guess.
+                    </div>
+                </div>
+
+                <div id="fastProbeOptions" style="margin-inline-start: 2.4em;">
+                    <div class="inputContainer">
+                        <input is="emby-input" id="txtProbeTimeoutSeconds" type="number" label="Probe Timeout (seconds)"
+                               placeholder="4" min="1" max="30" />
+                        <div class="fieldDescription">Hard deadline for one probe. On timeout the channel falls back to Emby's probe.</div>
+                    </div>
+
+                    <div class="inputContainer">
+                        <input is="emby-input" id="txtProbeMaxKilobytes" type="number" label="Probe Read Budget (KB)"
+                               placeholder="4096" min="128" max="16384" />
+                        <div class="fieldDescription">
+                            Ceiling, not a cost: the probe stops as soon as it has what it needs.
+                            Codecs are known within the first packets; only the resolution needs a key
+                            frame, which on a long-GOP channel can be a few MB in.
+                        </div>
+                    </div>
+
+                    <div class="inputContainer">
+                        <input is="emby-input" id="txtProbeCacheHours" type="number" label="Probe Result Cache (hours)"
+                               placeholder="24" min="1" max="720" />
+                        <div class="fieldDescription">
+                            How long probe results stay valid; they survive restarts. Saving a tuner
+                            clears them, which is what to do if a provider changes a channel's codec.
+                        </div>
+                    </div>
+                </div>
+
+                <div class="radioContainer">
+                    <label>
+                        <input type="radio" is="emby-radio" name="streamMetadataMode" id="radioFixedCodecs" />
+                        <span>Advertise fixed codecs for every channel (legacy)</span>
+                    </label>
+                    <div class="fieldDescription radioFieldDescription">
+                        Fast but a guess: every channel is advertised with the codecs below, which
+                        breaks HEVC/4K playback (audio with black video) because Emby then offers those
+                        channels to clients as h264. Only an escape hatch for providers no probe can read.
+                    </div>
+                </div>
+
+                <div id="fixedCodecOptions" style="margin-inline-start: 2.4em;">
+                    <div class="inputContainer">
+                        <input is="emby-input" id="txtVideoCodec" type="text" label="Fixed Video Codec"
+                               placeholder="h264" />
+                        <div class="fieldDescription">Common values: h264, hevc, mpeg2video</div>
+                    </div>
+
+                    <div class="inputContainer">
+                        <input is="emby-input" id="txtAudioCodec" type="text" label="Fixed Audio Codec"
+                               placeholder="aac" />
+                        <div class="fieldDescription">Common values: aac, ac3, eac3, mp3</div>
+                    </div>
+                </div>
             </div>
 
-            <div class="inputContainer">
-                <input is="emby-input" id="txtAudioCodec" type="text" label="Default Audio Codec"
-                       placeholder="aac" />
-                <div class="fieldDescription">Only used when the option above is enabled. Common values: aac, ac3, eac3, mp3</div>
-            </div>
+            <div class="verticalSection verticalSection-extrabottompadding">
+                <h2 class="sectionTitle">Global Request Settings</h2>
 
-            <h2 class="sectionTitle">Global Request Settings</h2>
+                <div class="inputContainer">
+                    <input is="emby-input" id="txtUserAgent" type="text" label="User-Agent (global fallback)"
+                           placeholder="VLC/3.0.0" />
+                    <div class="fieldDescription">Sent with playlist and stream requests for all tuners that do not specify their own User-Agent.</div>
+                </div>
 
-            <div class="inputContainer">
-                <input is="emby-input" id="txtUserAgent" type="text" label="User-Agent (global fallback)"
-                       placeholder="VLC/3.0.0" />
-                <div class="fieldDescription">Sent with playlist and stream requests for all tuners that do not specify their own User-Agent.</div>
-            </div>
+                <div class="inputContainer">
+                    <input is="emby-input" id="txtCacheTtlHours" type="number" label="Channel List Cache Duration (hours)"
+                           placeholder="6" min="1" max="168" />
+                    <div class="fieldDescription">How long to cache each tuner's channel list before re-fetching. Per-tuner overrides take precedence.</div>
+                </div>
 
-            <div class="inputContainer">
-                <input is="emby-input" id="txtCacheTtlHours" type="number" label="Channel List Cache Duration (hours)"
-                       placeholder="6" min="1" max="168" />
-                <div class="fieldDescription">How long to cache each tuner's channel list before re-fetching. Per-tuner overrides take precedence.</div>
-            </div>
+                <div class="inputContainer">
+                    <input is="emby-input" id="txtStreamTimeoutSeconds" type="number" label="Stream Timeout (seconds)"
+                           placeholder="15" min="1" max="300" />
+                    <div class="fieldDescription">Default seconds to wait when connecting to a stream. Per-tuner overrides take precedence.</div>
+                </div>
 
-            <div class="inputContainer">
-                <input is="emby-input" id="txtStreamTimeoutSeconds" type="number" label="Stream Timeout (seconds)"
-                       placeholder="15" min="1" max="300" />
-                <div class="fieldDescription">Default seconds to wait when connecting to a stream. Per-tuner overrides take precedence.</div>
-            </div>
-
-            <div class="inputContainer">
-                <input is="emby-input" id="txtStreamRetryCount" type="number" label="Stream Open Retries"
-                       placeholder="2" min="0" max="10" />
-                <div class="fieldDescription">Default number of retries on stream open failure. Per-tuner overrides take precedence.</div>
+                <div class="inputContainer">
+                    <input is="emby-input" id="txtStreamRetryCount" type="number" label="Stream Open Retries"
+                           placeholder="2" min="0" max="10" />
+                    <div class="fieldDescription">Default number of retries on stream open failure. Per-tuner overrides take precedence.</div>
+                </div>
             </div>
 
             <div>

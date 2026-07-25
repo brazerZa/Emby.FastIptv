@@ -19,6 +19,23 @@ namespace Emby.FastIptv
         public string DefaultVideoCodec { get; set; } = "h264";
         public string DefaultAudioCodec { get; set; } = "aac";
 
+        // The fast probe is not optional: it reads the real codecs straight from the MPEG-TS
+        // PAT/PMT and the video parameter set, and per channel it already falls back to Emby's own
+        // probe whenever it cannot be certain. A global "let Emby probe everything" switch would
+        // only be a slower way to get the same answer, so there isn't one.
+
+        // Hard deadline for one probe. Exceeding it costs nothing but a fallback to Emby's probe.
+        public int ProbeTimeoutSeconds { get; set; } = 4;
+
+        // Read budget per probe. Codecs are known within the first packets; only the resolution
+        // needs a key frame, which on a long-GOP feed can be a few megabytes in. The probe stops
+        // early once it has what it needs, so this is a ceiling rather than a cost.
+        public int ProbeMaxKilobytes { get; set; } = 4096;
+
+        // How long a probe result stays valid. Results survive restarts on disk; re-saving a
+        // tuner clears them, which is the way out if a provider changes a channel's codec.
+        public int ProbeCacheHours { get; set; } = 24;
+
         // Global fallback User-Agent for all tuners that don't specify their own.
         public string UserAgent { get; set; } = "";
 
