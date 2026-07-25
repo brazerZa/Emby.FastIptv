@@ -6,6 +6,7 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Xml.Linq;
+using Emby.FastIptv.LiveTv.Probe;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.LiveTv;
@@ -73,6 +74,10 @@ namespace Emby.FastIptv.LiveTv
                 Cache.Remove(info.Id ?? string.Empty);
                 EpgCache.Remove(info.Id ?? string.Empty);
             }
+
+            // Saving a tuner doubles as the manual reset for probe results, which is what a user
+            // needs when a provider swaps a channel's codec inside the probe cache window.
+            StreamProber.ClearCache(BuildProbeOptions(Plugin.Instance?.Configuration));
             return Task.CompletedTask;
         }
 
@@ -156,10 +161,9 @@ namespace Emby.FastIptv.LiveTv
             var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
             var userAgent = GetEffectiveUserAgent(info.Id, config);
             var headers = ParseCustomHeaders(GetTunerSettings(info.Id)?.CustomHeaders);
-            return new List<MediaSourceInfo>
-            {
-                BuildMediaSource(channelId, channel.Url, config, userAgent, headers)
-            };
+            var source = await BuildMediaSourceAsync(channelId, channel.Url, config, userAgent, headers, ct)
+                .ConfigureAwait(false);
+            return new List<MediaSourceInfo> { source };
         }
 
         public async Task<ILiveStream> GetChannelStream(
@@ -173,7 +177,8 @@ namespace Emby.FastIptv.LiveTv
             var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
             var userAgent = GetEffectiveUserAgent(info.Id, config);
             var headers = ParseCustomHeaders(GetTunerSettings(info.Id)?.CustomHeaders);
-            var source = BuildMediaSource(channelId, channel.Url, config, userAgent, headers);
+            var source = await BuildMediaSourceAsync(channelId, channel.Url, config, userAgent, headers, ct)
+                .ConfigureAwait(false);
             var timeoutSeconds = GetEffectiveStreamTimeout(info.Id, config);
             var retryCount = GetEffectiveStreamRetryCount(info.Id, config);
 
@@ -205,16 +210,17 @@ namespace Emby.FastIptv.LiveTv
 
         // ── helpers ────────────────────────────────────────────────────────────
 
-        private static MediaSourceInfo BuildMediaSource(
+        private static async Task<MediaSourceInfo> BuildMediaSourceAsync(
             string channelId,
             string url,
             PluginConfiguration config,
             string userAgent,
-            Dictionary<string, string> customHeaders)
+            Dictionary<string, string> customHeaders,
+            CancellationToken ct)
         {
             // HLS streams (.m3u8) must be declared as "hls" so Emby doesn't pass
             // -f mpegts to ffmpeg and clients check HLS capability rather than TS.
-            var container = IsHlsUrl(url) ? "hls" : config.DefaultContainer;
+            var container = StreamProber.IsPlaylistUrl(url) ? "hls" : config.DefaultContainer;
 
             var source = new MediaSourceInfo
             {
@@ -231,16 +237,138 @@ namespace Emby.FastIptv.LiveTv
                 BufferMs = 3000,
                 RequiredHttpHeaders = BuildRequiredHeaders(userAgent, customHeaders),
 
-                // Deliberately empty: Emby probes the stream and fills in the real codecs,
-                // resolution and channel count. Advertising guesses makes Emby offer an HEVC
-                // 4K channel to clients as h264/1080p, which plays as audio-only black video.
+                // Empty means "no idea" and makes Emby probe the stream itself, which is correct
+                // but costs seconds on every tune. Advertising guesses is not an option: an HEVC
+                // 4K channel offered to clients as h264/1080p plays as audio with black video.
                 MediaStreams = new List<MediaStream>()
             };
 
             if (config.AdvertiseStreamMetadata)
+            {
                 source.MediaStreams = BuildAdvertisedStreams(config);
+                return source;
+            }
+
+            source.MediaStreams = await GetProbedStreamsAsync(url, userAgent, customHeaders, config, ct)
+                .ConfigureAwait(false);
 
             return source;
+        }
+
+        // Fast in-process probe of the real stream. Falls back to an empty list — i.e. to Emby's
+        // own probe — for anything it cannot determine with certainty, and never throws: a failed
+        // probe must cost latency at worst, never playback.
+        private static async Task<List<MediaStream>> GetProbedStreamsAsync(
+            string url,
+            string userAgent,
+            Dictionary<string, string> customHeaders,
+            PluginConfiguration config,
+            CancellationToken ct)
+        {
+            try
+            {
+                var result = await StreamProber
+                    .ProbeAsync(url, userAgent, customHeaders, BuildProbeOptions(config), ct)
+                    .ConfigureAwait(false);
+
+                return result.IsUsable ? ToMediaStreams(result.Streams) : new List<MediaStream>();
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception)
+            {
+                return new List<MediaStream>();
+            }
+        }
+
+        private static ProbeOptions BuildProbeOptions(PluginConfiguration config)
+        {
+            var timeout = config?.ProbeTimeoutSeconds ?? 4;
+            var kilobytes = config?.ProbeMaxKilobytes ?? 768;
+            var cacheHours = config?.ProbeCacheHours ?? 24;
+
+            return new ProbeOptions
+            {
+                TimeoutSeconds = timeout > 0 ? timeout : 4,
+                MaxBytes = (kilobytes > 0 ? kilobytes : 768) * 1024,
+                CacheTtl = TimeSpan.FromHours(cacheHours > 0 ? cacheHours : 24),
+                CacheFilePath = GetProbeCachePath()
+            };
+        }
+
+        private static string GetProbeCachePath()
+        {
+            var folder = Plugin.Instance?.DataFolderPath;
+            return string.IsNullOrEmpty(folder) ? null : Path.Combine(folder, "probe-cache.json");
+        }
+
+        // The Index values come straight from the PMT order, which is the order ffmpeg assigns,
+        // because Emby turns them into "-map 0:<index>" on the transcode command line.
+        private static List<MediaStream> ToMediaStreams(List<ProbedStream> probed)
+        {
+            var streams = new List<MediaStream>(probed.Count);
+            var videoSeen = false;
+            var audioSeen = false;
+            var subtitleSeen = false;
+
+            foreach (var p in probed)
+            {
+                var stream = new MediaStream
+                {
+                    Index = p.Index,
+                    Codec = p.Codec,
+                    Language = p.Language,
+                    Profile = p.Profile,
+                    Level = p.Level
+                };
+
+                switch (p.Kind)
+                {
+                    case ProbedStreamKind.Video:
+                        stream.Type = MediaStreamType.Video;
+                        stream.Width = p.Width;
+                        stream.Height = p.Height;
+                        stream.BitDepth = p.BitDepth;
+                        stream.IsInterlaced = p.IsInterlaced;
+                        stream.IsDefault = !videoSeen;
+                        videoSeen = true;
+                        break;
+
+                    case ProbedStreamKind.Audio:
+                        stream.Type = MediaStreamType.Audio;
+                        stream.Channels = p.Channels;
+                        stream.SampleRate = p.SampleRate;
+                        stream.ChannelLayout = ChannelLayoutFor(p.Channels);
+                        stream.IsDefault = !audioSeen;
+                        audioSeen = true;
+                        break;
+
+                    default:
+                        stream.Type = MediaStreamType.Subtitle;
+                        stream.IsDefault = !subtitleSeen;
+                        subtitleSeen = true;
+                        break;
+                }
+
+                streams.Add(stream);
+            }
+
+            return streams;
+        }
+
+        private static string ChannelLayoutFor(int? channels)
+        {
+            switch (channels)
+            {
+                case 1: return "mono";
+                case 2: return "stereo";
+                case 3: return "2.1";
+                case 6: return "5.1";
+                case 8: return "7.1";
+                default: return null;
+            }
         }
 
         // ffmpeg and direct-playing clients fetch the URL themselves rather than going
@@ -297,14 +425,6 @@ namespace Emby.FastIptv.LiveTv
             if (Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeFile)
                 return uri.LocalPath;
             return url;
-        }
-
-        private static bool IsHlsUrl(string url)
-        {
-            if (string.IsNullOrEmpty(url)) return false;
-            var path = url.Split('?')[0];
-            return path.EndsWith(".m3u8", StringComparison.OrdinalIgnoreCase)
-                || path.EndsWith(".m3u", StringComparison.OrdinalIgnoreCase);
         }
 
         private async Task<M3uChannel> ResolveChannelAsync(
