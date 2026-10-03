@@ -1,0 +1,160 @@
+name: CI
+
+# Fork-only workflow: builds the plugin against Emby's reference assemblies from nuget.org and,
+# on master, publishes a GitHub Release with Emby.FastIptv.dll as the single asset so
+# Emby.GitHubRepoPluginInstall (https://github.com/bakes82/Emby.GitHubRepoPluginInstall)
+# can install and auto-update it. The installer updates whenever the latest release tag changes.
+
+on:
+  pull_request:
+  push:
+    branches: ["**"]
+  # Manual release path when GitHub drops push webhooks.
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # Never cancel master: a cancelled run can drop the version-bump commit.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+
+permissions:
+  contents: read
+
+env:
+  # Emby has not published a stable 4.10 package; this beta is the newest 4.10 API surface.
+  RELEASE_EMBY_VERSION: 4.10.0.24-beta2
+
+jobs:
+  build:
+    # Skip re-entry when the release job pushes the version bump commit.
+    if: >-
+      github.event_name != 'push' ||
+      !contains(github.event.head_commit.message, 'chore: bump version')
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 4.9 keeps the owner's server working; 4.10 is what the fork targets.
+        emby: ["4.9.1.90", "4.10.0.24-beta2"]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Fetch Emby ${{ matrix.emby }} reference assemblies
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/emby-${{ matrix.emby }}"
+          mkdir -p "$dir"
+          for pkg in mediabrowser.server.core mediabrowser.common; do
+            url="https://api.nuget.org/v3-flatcontainer/${pkg}/${{ matrix.emby }}/${pkg}.${{ matrix.emby }}.nupkg"
+            curl -fsSL -o "$RUNNER_TEMP/${pkg}.nupkg" "$url"
+            unzip -o -j -q "$RUNNER_TEMP/${pkg}.nupkg" 'lib/netstandard2.0/*.dll' -d "$dir"
+          done
+          ls "$dir"
+          echo "EMBY_DIR=$dir" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: >
+          dotnet build Emby.FastIptv/Emby.FastIptv.csproj -c Release
+          -p:EmbySystemDir="$EMBY_DIR"
+          --verbosity minimal
+
+  release:
+    needs: build
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Fetch Emby reference assemblies
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/emby-${RELEASE_EMBY_VERSION}"
+          mkdir -p "$dir"
+          for pkg in mediabrowser.server.core mediabrowser.common; do
+            url="https://api.nuget.org/v3-flatcontainer/${pkg}/${RELEASE_EMBY_VERSION}/${pkg}.${RELEASE_EMBY_VERSION}.nupkg"
+            curl -fsSL -o "$RUNNER_TEMP/${pkg}.nupkg" "$url"
+            unzip -o -j -q "$RUNNER_TEMP/${pkg}.nupkg" 'lib/netstandard2.0/*.dll' -d "$dir"
+          done
+          echo "EMBY_DIR=$dir" >> "$GITHUB_ENV"
+
+      # Bumps only the revision (a.b.c.d -> a.b.c.d+1) so Emby's ETag cache-busting sees a
+      # new version on every release; major/minor/build stay under manual control.
+      - name: Bump assembly revision
+        run: |
+          set -euo pipefail
+          ASSEMBLY_INFO=Emby.FastIptv/Properties/AssemblyInfo.cs
+          OLD=$(grep -oP 'AssemblyVersion\("\K[^"]+' "$ASSEMBLY_INFO")
+          VER="${OLD%.*}.$(( ${OLD##*.} + 1 ))"
+          sed -i -E "s/(Assembly(File)?Version\(\")[^\"]+/\1${VER}/" "$ASSEMBLY_INFO"
+          grep -n Version "$ASSEMBLY_INFO"
+          echo "VER=${VER}" >> "$GITHUB_ENV"
+          echo "TAG=v${VER}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - name: Build release plugin
+        run: >
+          dotnet build Emby.FastIptv/Emby.FastIptv.csproj -c Release
+          -p:EmbySystemDir="$EMBY_DIR"
+          --verbosity minimal
+
+      - name: Commit version bump
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Emby.FastIptv/Properties/AssemblyInfo.cs
+          git commit -m "chore: bump version to ${VER} [skip ci]"
+          git pull --rebase origin master
+          git push origin HEAD:master
+
+      - name: Upload plugin DLL artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Emby.FastIptv
+          path: Emby.FastIptv/bin/Release/net8.0/Emby.FastIptv.dll
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: Emby.FastIptv ${{ env.VER }}
+          files: Emby.FastIptv/bin/Release/net8.0/Emby.FastIptv.dll
+          fail_on_unmatched_files: true
+          make_latest: true
+          body: |
+            Release build from `${{ github.sha }}` on `master`, compiled against Emby ${{ env.RELEASE_EMBY_VERSION }} reference assemblies (also verified to build against 4.9.1.90).
+
+            Install via [Emby.GitHubRepoPluginInstall](https://github.com/bakes82/Emby.GitHubRepoPluginInstall):
+            add `https://github.com/${{ github.repository }}`, install/update, restart Emby.
+
+            Or download `Emby.FastIptv.dll`, copy it flat into your Emby `plugins` folder (remove any older Emby.FastIptv*.dll), then restart Emby.
+
+      - name: Prune old releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          KEEP=5
+          mapfile -t OLD_TAGS < <(
+            gh release list --repo "${{ github.repository }}" --limit 100 \
+              --json tagName,createdAt \
+              --jq "sort_by(.createdAt) | reverse | .[${KEEP}:] | .[].tagName"
+          )
+          for old in "${OLD_TAGS[@]+"${OLD_TAGS[@]}"}"; do
+            echo "Pruning old release: $old"
+            gh release delete "$old" --repo "${{ github.repository }}" --yes --cleanup-tag
+          done
