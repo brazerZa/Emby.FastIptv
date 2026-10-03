@@ -1,7 +1,8 @@
 name: CI
 
-# Fork-only workflow: builds the plugin against Emby's reference assemblies from nuget.org and,
-# on master, publishes a GitHub Release with Emby.FastIptv.dll as the single asset so
+# Fork-only workflow: builds the plugin against real Emby Server releases (assemblies taken from
+# github.com/MediaBrowser/Emby.Releases), checks the DLL actually loads on each of them, and, on
+# master, publishes a GitHub Release with Emby.FastIptv.dll as the single asset so
 # Emby.GitHubRepoPluginInstall (https://github.com/bakes82/Emby.GitHubRepoPluginInstall)
 # can install and auto-update it. The installer updates whenever the latest release tag changes.
 
@@ -21,8 +22,10 @@ permissions:
   contents: read
 
 env:
-  # Emby has not published a stable 4.10 package; this beta is the newest 4.10 API surface.
-  RELEASE_EMBY_VERSION: 4.10.0.24-beta2
+  # The release DLL is compiled against this server version...
+  RELEASE_EMBY_VERSION: 4.10.1.0
+  # ...and must load on every one of these (4.9.5.0 is what upstream runs).
+  LOADCHECK_EMBY_VERSIONS: 4.9.5.0 4.10.1.0
 
 jobs:
   build:
@@ -34,8 +37,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 4.9 keeps the owner's server working; 4.10 is what the fork targets.
-        emby: ["4.9.1.90", "4.10.0.24-beta2"]
+        emby: ["4.9.5.0", "4.10.1.0"]
     steps:
       - uses: actions/checkout@v5
 
@@ -43,24 +45,28 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
-      - name: Fetch Emby ${{ matrix.emby }} reference assemblies
+      - name: Fetch Emby server assemblies
         run: |
           set -euo pipefail
-          dir="$RUNNER_TEMP/emby-${{ matrix.emby }}"
-          mkdir -p "$dir"
-          for pkg in mediabrowser.server.core mediabrowser.common; do
-            url="https://api.nuget.org/v3-flatcontainer/${pkg}/${{ matrix.emby }}/${pkg}.${{ matrix.emby }}.nupkg"
-            curl -fsSL -o "$RUNNER_TEMP/${pkg}.nupkg" "$url"
-            unzip -o -j -q "$RUNNER_TEMP/${pkg}.nupkg" 'lib/netstandard2.0/*.dll' -d "$dir"
+          for v in $LOADCHECK_EMBY_VERSIONS ${{ matrix.emby }}; do
+            [ -d "$RUNNER_TEMP/emby-$v" ] || bash tools/fetch-emby.sh "$v" "$RUNNER_TEMP/emby-$v"
           done
-          ls "$dir"
-          echo "EMBY_DIR=$dir" >> "$GITHUB_ENV"
 
-      - name: Build
+      - name: Build against Emby ${{ matrix.emby }}
         run: >
           dotnet build Emby.FastIptv/Emby.FastIptv.csproj -c Release
-          -p:EmbySystemDir="$EMBY_DIR"
+          -p:EmbySystemDir="$RUNNER_TEMP/emby-${{ matrix.emby }}"
           --verbosity minimal
+
+      - name: Load check on every supported server
+        run: |
+          set -euo pipefail
+          dotnet build tools/LoadCheck/LoadCheck.csproj -c Release --verbosity quiet
+          for v in $LOADCHECK_EMBY_VERSIONS; do
+            echo "Emby $v:"
+            dotnet tools/LoadCheck/bin/Release/net8.0/LoadCheck.dll \
+              Emby.FastIptv/bin/Release/net8.0/Emby.FastIptv.dll "$RUNNER_TEMP/emby-$v"
+          done
 
   release:
     needs: build
@@ -79,17 +85,12 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
-      - name: Fetch Emby reference assemblies
+      - name: Fetch Emby server assemblies
         run: |
           set -euo pipefail
-          dir="$RUNNER_TEMP/emby-${RELEASE_EMBY_VERSION}"
-          mkdir -p "$dir"
-          for pkg in mediabrowser.server.core mediabrowser.common; do
-            url="https://api.nuget.org/v3-flatcontainer/${pkg}/${RELEASE_EMBY_VERSION}/${pkg}.${RELEASE_EMBY_VERSION}.nupkg"
-            curl -fsSL -o "$RUNNER_TEMP/${pkg}.nupkg" "$url"
-            unzip -o -j -q "$RUNNER_TEMP/${pkg}.nupkg" 'lib/netstandard2.0/*.dll' -d "$dir"
+          for v in $LOADCHECK_EMBY_VERSIONS $RELEASE_EMBY_VERSION; do
+            [ -d "$RUNNER_TEMP/emby-$v" ] || bash tools/fetch-emby.sh "$v" "$RUNNER_TEMP/emby-$v"
           done
-          echo "EMBY_DIR=$dir" >> "$GITHUB_ENV"
 
       # Bumps only the revision (a.b.c.d -> a.b.c.d+1) so Emby's ETag cache-busting sees a
       # new version on every release; major/minor/build stay under manual control.
@@ -107,8 +108,18 @@ jobs:
       - name: Build release plugin
         run: >
           dotnet build Emby.FastIptv/Emby.FastIptv.csproj -c Release
-          -p:EmbySystemDir="$EMBY_DIR"
+          -p:EmbySystemDir="$RUNNER_TEMP/emby-$RELEASE_EMBY_VERSION"
           --verbosity minimal
+
+      - name: Load check release DLL on every supported server
+        run: |
+          set -euo pipefail
+          dotnet build tools/LoadCheck/LoadCheck.csproj -c Release --verbosity quiet
+          for v in $LOADCHECK_EMBY_VERSIONS; do
+            echo "Emby $v:"
+            dotnet tools/LoadCheck/bin/Release/net8.0/LoadCheck.dll \
+              Emby.FastIptv/bin/Release/net8.0/Emby.FastIptv.dll "$RUNNER_TEMP/emby-$v"
+          done
 
       - name: Commit version bump
         run: |
@@ -136,7 +147,7 @@ jobs:
           fail_on_unmatched_files: true
           make_latest: true
           body: |
-            Release build from `${{ github.sha }}` on `master`, compiled against Emby ${{ env.RELEASE_EMBY_VERSION }} reference assemblies (also verified to build against 4.9.1.90).
+            Release build from `${{ github.sha }}` on `master`, compiled against Emby Server ${{ env.RELEASE_EMBY_VERSION }} and load-checked on Emby ${{ env.LOADCHECK_EMBY_VERSIONS }}.
 
             Install via [Emby.GitHubRepoPluginInstall](https://github.com/bakes82/Emby.GitHubRepoPluginInstall):
             add `https://github.com/${{ github.repository }}`, install/update, restart Emby.
