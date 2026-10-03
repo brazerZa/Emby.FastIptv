@@ -48,24 +48,33 @@ namespace Emby.FastIptv.LiveTv
             DateOpened = DateTimeOffset.UtcNow;
         }
 
-        // Emby 4.10 added AddConsumer/RemoveConsumer to ILiveStream. The recorder and playback each
-        // register a consumer id; Emby uses ConsumerCount to decide when the stream can be closed.
+        // Emby uses ConsumerCount to decide when the stream can be closed. Up to 4.9 the server
+        // sets it directly; 4.10 removed the setter and calls AddConsumer/RemoveConsumer with a
+        // consumer id instead. Both paths are implemented so one DLL loads on either server.
         private readonly HashSet<string> _consumers = new HashSet<string>();
         private readonly object _consumerLock = new object();
+        private int _consumerCount;
 
         public int ConsumerCount
         {
-            get { lock (_consumerLock) { return _consumers.Count; } }
+            get { lock (_consumerLock) { return _consumerCount; } }
+            set { lock (_consumerLock) { _consumerCount = value; } }
         }
 
         public void AddConsumer(string id)
         {
-            lock (_consumerLock) { _consumers.Add(id); }
+            lock (_consumerLock)
+            {
+                if (_consumers.Add(id ?? string.Empty)) _consumerCount++;
+            }
         }
 
         public void RemoveConsumer(string id)
         {
-            lock (_consumerLock) { _consumers.Remove(id); }
+            lock (_consumerLock)
+            {
+                if (_consumers.Remove(id ?? string.Empty) && _consumerCount > 0) _consumerCount--;
+            }
         }
         public string OriginalStreamId { get; set; }
         public string TunerHostId { get; }
